@@ -169,9 +169,6 @@ export default function App() {
   const [history, setHistory] = useState([])
   const [stats, setStats] = useState({ total: 0, blocked: 0, review: 0, allowed: 0, avg_risk: 0 })
   const [loading, setLoading] = useState(false)
-  const [deepScanning, setDeepScanning] = useState(false)
-  const [deepScanResult, setDeepScanResult] = useState(null)
-  const [sandboxHistory, setSandboxHistory] = useState([])
   const [protectionEnabled, setProtectionEnabled] = useState(true)
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('all')
@@ -184,7 +181,7 @@ export default function App() {
   const [scanDots, setScanDots] = useState(0)
 
   useEffect(() => {
-    if (!loading && !deepScanning) {
+    if (!loading) {
       setScanDots(0)
       return
     }
@@ -192,7 +189,7 @@ export default function App() {
       setScanDots((prev) => (prev + 1) % 7)
     }, 500)
     return () => clearInterval(timer)
-  }, [loading, deepScanning])
+  }, [loading])
 
   const scanningDotsText = `Scanning${'.'.repeat(scanDots)}`
 
@@ -236,11 +233,10 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      const [historyRes, statsRes, settingsRes, sandboxRes] = await Promise.all([
+      const [historyRes, statsRes, settingsRes] = await Promise.all([
         fetch(`${API}/history`),
         fetch(`${API}/stats`),
         fetch(`${API}/settings`).catch(() => null),
-        fetch(`${API}/sandbox-history`).catch(() => null),
       ])
 
       if (historyRes.ok) setHistory(await historyRes.json())
@@ -250,9 +246,6 @@ export default function App() {
         if (typeof settingsData.interception_active === 'boolean') {
           setProtectionEnabled(settingsData.interception_active)
         }
-      }
-      if (sandboxRes && sandboxRes.ok) {
-        setSandboxHistory(await sandboxRes.json())
       }
       setError('')
     } catch {
@@ -283,7 +276,6 @@ export default function App() {
       return
     }
 
-    setDeepScanResult(null)
     setLoading(true)
     setError('')
 
@@ -299,7 +291,6 @@ export default function App() {
         throw new Error(data.error || 'Analysis could not be completed.')
       }
 
-      setDeepScanResult(null)
       setResult(data)
       if (typeof data.interception_active === 'boolean') {
         setProtectionEnabled(data.interception_active)
@@ -310,90 +301,6 @@ export default function App() {
       setError(err.message)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleDeepScan = async (targetUrl = url) => {
-    const cleanUrl = targetUrl.trim()
-    if (!cleanUrl) {
-      setError('Please paste or type a web address for deep sandbox analysis.')
-      return
-    }
-
-    setResult(null)
-    setDeepScanResult(null)
-    setDeepScanning(true)
-    setError('')
-
-    const startTime = Date.now()
-    const TIMEOUT_MS = 90000
-    const POLL_INTERVAL_MS = 2000
-
-    try {
-      let startRes
-      try {
-        startRes = await fetch(`${API}/deep-scan`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: cleanUrl }),
-        })
-      } catch {
-        startRes = await fetch('/deep-scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: cleanUrl }),
-        })
-      }
-
-      const startData = await startRes.json().catch(() => ({}))
-      if (!startRes.ok) {
-        throw new Error(startData.error || 'Could not start sandbox deep scan.')
-      }
-
-      const jobId = startData.job_id
-      if (!jobId) {
-        throw new Error('No job identifier was returned by the sandbox backend.')
-      }
-
-      while (true) {
-        if (Date.now() - startTime >= TIMEOUT_MS) {
-          throw new Error('Sandbox deep scan timed out after 90 seconds. Execution took longer than expected.')
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
-
-        let pollRes
-        try {
-          pollRes = await fetch(`${API}/deep-scan/${jobId}`)
-        } catch {
-          pollRes = await fetch(`/deep-scan/${jobId}`)
-        }
-
-        if (!pollRes.ok) {
-          const errData = await pollRes.json().catch(() => ({}))
-          throw new Error(errData.error || 'Failed to retrieve deep scan status.')
-        }
-
-        const pollData = await pollRes.json()
-
-        if (pollData.status === 'done') {
-          setResult(null)
-          setDeepScanResult(pollData.result)
-          setUrl(cleanUrl)
-          fetchData()
-          break
-        } else if (pollData.status === 'failed') {
-          throw new Error(pollData.error || 'Sandbox deep scan failed to analyze the target URL.')
-        }
-      }
-    } catch (err) {
-      if (err.name === 'TypeError' && err.message.includes('fetch')) {
-        setError('Backend server is unreachable. Please ensure the Flask backend is running on port 5000.')
-      } else {
-        setError(err.message || 'An unexpected error occurred during deep sandbox analysis.')
-      }
-    } finally {
-      setDeepScanning(false)
     }
   }
 
@@ -424,27 +331,10 @@ export default function App() {
       const res = await fetch(`${API}/history/${id}`)
       if (!res.ok) throw new Error('Could not load record details.')
       const data = await res.json()
-      setDeepScanResult(null)
       setResult(data)
       setSelectedRecord(data)
       setUrl(data.normalized_url || data.url || '')
       window.scrollTo({ top: 380, behavior: 'smooth' })
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  const handleInspectSandbox = async (jobId) => {
-    try {
-      const res = await fetch(`${API}/deep-scan/${jobId}`)
-      if (!res.ok) throw new Error('Could not load sandbox scan details.')
-      const data = await res.json()
-      if (data.result) {
-        setResult(null)
-        setDeepScanResult(data.result)
-        setUrl(data.result.scanned_url || '')
-        window.scrollTo({ top: 380, behavior: 'smooth' })
-      }
     } catch (err) {
       setError(err.message)
     }
@@ -516,88 +406,7 @@ export default function App() {
     }
   }
 
-  const getDeepScanVerdictDetails = (verdict) => {
-    const v = (verdict || '').toLowerCase()
-    if (v.includes('phish')) {
-      return {
-        title: 'Phishing Target Intercepted',
-        badgeText: 'Phishing',
-        className: 'verdict-blocked',
-        iconName: 'shield-x',
-        description:
-          'Active deception or security interstitial detected inside sandbox environment. The target page initiates credential harvesting forms, deceptive brand spoofing, or has been flagged for phishing.',
-      }
-    }
-    if (v.includes('suspicious')) {
-      return {
-        title: 'Suspicious Behavior Detected',
-        badgeText: 'Suspicious',
-        className: 'verdict-review',
-        iconName: 'alert-triangle',
-        description:
-          'Anomalous DOM modifications, obfuscated script executions, inactive threat simulation paths, or multi-hop redirect gateways were identified.',
-      }
-    }
-    if (v.includes('timeout') || v.includes('timed out') || v.includes('inactive') || v.includes('unreachable') || v.includes('failed')) {
-      return {
-        title: 'Connection Inaccessible / Timed Out',
-        badgeText: 'Timeout',
-        className: 'verdict-review',
-        iconName: 'alert-triangle',
-        description:
-          'The destination server timed out or failed to complete HTTP communication during sandbox evaluation.',
-      }
-    }
-    if (v.includes('404') || v.includes('not found')) {
-      return {
-        title: 'Inactive / Endpoint Not Found (HTTP 404)',
-        badgeText: 'HTTP 404',
-        className: 'verdict-review',
-        iconName: 'alert-triangle',
-        description:
-          'The destination server returned HTTP 404 (Not Found) or 410 (Gone). The page does not exist, was taken down by the host, or is an inactive dead link.',
-      }
-    }
-    if (v.includes('nxdomain') || v.includes('offline')) {
-      return {
-        title: 'Non-Existent / Inactive Domain (NXDOMAIN)',
-        badgeText: 'NXDOMAIN',
-        className: 'verdict-review',
-        iconName: 'alert-triangle',
-        description:
-          'This domain failed DNS resolution. Public nameservers confirm it does not exist (NXDOMAIN / ERR_NAME_NOT_RESOLVED). The site is offline, expired, or suspended.',
-      }
-    }
-    if (v.includes('403') || v.includes('500') || v.includes('502') || v.includes('error') || v.includes('blocked')) {
-      return {
-        title: 'Endpoint Inaccessible / Server Error',
-        badgeText: 'HTTP Error',
-        className: 'verdict-review',
-        iconName: 'alert-triangle',
-        description:
-          'The destination web server returned an error status code or actively blocked access to the sandbox container.',
-      }
-    }
-    if (v.includes('safe') || v.includes('allow')) {
-      return {
-        title: 'Safe Destination Verified',
-        badgeText: 'Safe',
-        className: 'verdict-safe',
-        iconName: 'check',
-        description:
-          'Headless container executed full navigation and DOM rendering without observing credential spoofing or malicious network signals.',
-      }
-    }
-    return {
-      title: 'Unverified Destination',
-      badgeText: 'Review',
-      className: 'verdict-review',
-      iconName: 'alert-triangle',
-      description: 'Destination evaluation yielded inconclusive telemetry. Exercise caution.',
-    }
-  }
-
-  const isScanningAny = loading || deepScanning
+  const isScanningAny = loading
 
   return (
     <div className="container">
@@ -651,7 +460,7 @@ export default function App() {
         <section className="scanner-card">
           <div className="scanner-intro">
             <h2>Check a link before you click it</h2>
-            <p>Paste any web address to test it against verified domain lists, brand lookalikes, pattern-recognition models, or sandbox emulation.</p>
+            <p>Paste any web address to test it against verified domain lists, brand lookalikes, heuristic signatures, and machine learning models.</p>
           </div>
 
           <form
@@ -671,15 +480,6 @@ export default function App() {
 
             <button type="submit" className="scan-btn" disabled={isScanningAny}>
               {loading ? scanningDotsText : 'Scan Link'}
-            </button>
-
-            <button
-              type="button"
-              className="scan-btn deep-scan-btn"
-              onClick={() => handleDeepScan()}
-              disabled={isScanningAny}
-            >
-              {deepScanning ? scanningDotsText : 'Deep Scan'}
             </button>
           </form>
 
@@ -732,228 +532,7 @@ export default function App() {
           </div>
         </section>
 
-        {deepScanResult ? (
-          <section className="deep-scan-card">
-            <div className="deep-scan-header">
-              <div className="deep-scan-title-wrap">
-                <h3>Isolated Environment Execution</h3>
-                <span className="deep-scan-sub">Runtime behavioral inspection</span>
-              </div>
-              <button
-                type="button"
-                className="close-btn"
-                onClick={() => setDeepScanResult(null)}
-                aria-label="Dismiss deep scan results"
-              >
-                <Icon name="close" size={18} />
-              </button>
-            </div>
-
-            {(() => {
-              const verdictInfo = getDeepScanVerdictDetails(deepScanResult.verdict)
-              const screenshotSrc = deepScanResult.screenshot?.startsWith('data:')
-                ? deepScanResult.screenshot
-                : `data:image/png;base64,${deepScanResult.screenshot || ''}`
-
-              return (
-                <>
-                  <div className={`verdict-banner ${verdictInfo.className}`}>
-                    <div className="verdict-icon">
-                      <Icon name={verdictInfo.iconName} size={28} />
-                    </div>
-                    <div className="verdict-text">
-                      <div className="verdict-header">
-                        <h3>{verdictInfo.title}</h3>
-                      </div>
-                      <p>{verdictInfo.description}</p>
-                      <div className="url-preview">{deepScanResult.scanned_url || url}</div>
-                    </div>
-                  </div>
-
-                  <div className="scores-grid">
-                    <div className="score-box">
-                      <span className="score-label">Sandbox Verdict</span>
-                      <strong className={`score-value ${verdictInfo.className}`}>
-                        {deepScanResult.verdict}
-                      </strong>
-                      <span className="score-sub">Behavioral runtime classification</span>
-                    </div>
-
-                    <div className="score-box">
-                      <span className="score-label">Confidence Score</span>
-                      <strong className="score-value">
-                        {typeof deepScanResult.confidence === 'number'
-                          ? `${(deepScanResult.confidence * 100).toFixed(1)}%`
-                          : deepScanResult.confidence}
-                      </strong>
-                      <span className="score-sub">
-                        Relative confidence rating ({Number(deepScanResult.confidence).toFixed(2)})
-                      </span>
-                    </div>
-
-                    <div className="score-box">
-                      <span className="score-label">Redirect Hops</span>
-                      <strong className="score-value">
-                        {deepScanResult.redirect_chain?.length || 1}
-                      </strong>
-                      <span className="score-sub">Total navigation transitions observed</span>
-                    </div>
-                  </div>
-
-                  <div className="findings-section">
-                    <h4>Observed Navigation & Redirect Chain</h4>
-                    <div className="redirect-chain-list">
-                      {deepScanResult.redirect_chain && deepScanResult.redirect_chain.length > 0 ? (
-                        deepScanResult.redirect_chain.map((hop, i) => (
-                          <div className="redirect-hop-item" key={i}>
-                            <div className="hop-index">
-                              {i === 0
-                                ? 'Origin'
-                                : i === deepScanResult.redirect_chain.length - 1
-                                ? 'Final'
-                                : `Hop ${i}`}
-                            </div>
-                            <div className="hop-url" title={hop}>
-                              {hop}
-                            </div>
-                            {i < deepScanResult.redirect_chain.length - 1 && (
-                              <div className="hop-arrow">
-                                <Icon name="arrow-right" size={14} />
-                              </div>
-                            )}
-                          </div>
-                        ))
-                      ) : (
-                        <p className="no-flags">Single direct navigation without redirects.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {deepScanResult.screenshot && (
-                    <div className="screenshot-section">
-                      <h4>Sandbox Rendered Viewport Screenshot</h4>
-                      <div className="screenshot-frame">
-                        <div className="screenshot-topbar">
-                          <span className="browser-dot red"></span>
-                          <span className="browser-dot yellow"></span>
-                          <span className="browser-dot green"></span>
-                          <span className="browser-address">{deepScanResult.scanned_url || url}</span>
-                        </div>
-                        <img
-                          src={screenshotSrc}
-                          alt="Sandbox viewport preview"
-                          className="screenshot-image"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="findings-section" style={{ marginTop: '28px' }}>
-                    <h4>Detection Signals</h4>
-                    <div className="reasons-list">
-                      {deepScanResult.reasons && deepScanResult.reasons.length > 0 ? (
-                        deepScanResult.reasons.map((reason, idx) => (
-                          <div className="reason-item" key={idx}>
-                            <span className="signal-index">{idx + 1}</span>
-                            <div className="reason-content">
-                              <strong>{reason}</strong>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="no-flags">No threat indicators triggered during sandbox execution.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {deepScanResult.packet_telemetry && (
-                    <div className="telemetry-section">
-                      <h4>Network Layer Analysis</h4>
-                      <div className="telemetry-card">
-                        <div className="telemetry-row header-row">
-                          <div>
-                            <span className="telemetry-tag">Network Wire Inspection</span>
-                            <h5>Outbound Network &amp; Credential Transmission Log</h5>
-                          </div>
-                        </div>
-
-                        <div className="telemetry-grid">
-                          <div className="telemetry-box">
-                            <span className="telemetry-label">Source &amp; Destination IP</span>
-                            <strong>
-                              {deepScanResult.packet_telemetry.source_ip} ➔ {deepScanResult.packet_telemetry.destination_ip}
-                            </strong>
-                            <span className="telemetry-sub">
-                              Port: {deepScanResult.packet_telemetry.destination_port}
-                            </span>
-                          </div>
-
-                          <div className="telemetry-box">
-                            <span className="telemetry-label">Fake Credentials</span>
-                            <strong>
-                              {deepScanResult.packet_telemetry.canary_injection.form_found
-                                ? (deepScanResult.packet_telemetry.canary_injection.canary_user || 'Technoblade@never.die')
-                                : 'NA'}
-                            </strong>
-                            <span className="telemetry-sub">
-                              {deepScanResult.packet_telemetry.canary_injection.form_found ? (
-                                <>Password: <code>{deepScanResult.packet_telemetry.canary_injection.canary_pass || '12345678'}</code></>
-                              ) : (
-                                'Password: NA'
-                              )}
-                            </span>
-                          </div>
-
-                          <div className="telemetry-box">
-                            <span className="telemetry-label">Sharing Credential to Any Link</span>
-                            <strong title={deepScanResult.packet_telemetry.canary_injection.post_destination}>
-                              {deepScanResult.packet_telemetry.canary_injection.form_found
-                                ? deepScanResult.packet_telemetry.canary_injection.post_destination
-                                : 'NA'}
-                            </strong>
-                            <span
-                              className={`telemetry-sub ${
-                                deepScanResult.packet_telemetry.canary_injection.destination_mismatch
-                                  ? 'text-danger'
-                                  : ''
-                              }`}
-                            >
-                              {deepScanResult.packet_telemetry.canary_injection.form_found ? (
-                                deepScanResult.packet_telemetry.canary_injection.destination_mismatch
-                                  ? '⚠️ Warning: Form redirects credentials to external unverified link!'
-                                  : 'Submitted only to origin link'
-                              ) : (
-                                'No credential transmission observed'
-                              )}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="telemetry-details">
-                          <div className="telemetry-detail-item">
-                            <span>Credential Verification &amp; Encoder:</span>
-                            <em>
-                              {deepScanResult.packet_telemetry.canary_injection.form_found ? (
-                                <>
-                                  {deepScanResult.packet_telemetry.canary_injection.password_status ||
-                                    'Password rejected as incorrect (fake account, as expected)'}
-                                  {' | '}
-                                  Encoder Used: <code>{deepScanResult.packet_telemetry.canary_injection.encoding_detected || 'POST Application/x-www-form-urlencoded'}</code>
-                                </>
-                              ) : (
-                                <>NA (No login input found on page) | Encoder Used: <code>NA</code></>
-                              )}
-                            </em>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )
-            })()}
-          </section>
-        ) : result ? (
+        {result && (
           <section className="result-card">
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
               <button
@@ -1121,7 +700,7 @@ export default function App() {
               )
             })()}
           </section>
-        ) : null}
+        )}
 
         <section className="history-section">
           <div className="history-header">
@@ -1239,84 +818,6 @@ export default function App() {
           </div>
         </section>
 
-        <section className="history-section">
-          <div className="history-header">
-            <div>
-              <h3>Sandbox Execution Results</h3>
-              <p>Previous isolated browser detonations, canary credentials injection, and telemetry traces.</p>
-            </div>
-
-            <div className="history-buttons">
-              <button type="button" className="btn-secondary" onClick={fetchData}>
-                <Icon name="refresh" size={14} />
-                <span>Refresh</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="history-list">
-            {sandboxHistory.length === 0 ? (
-              <div className="empty-history">
-                <p>No sandbox executions recorded yet. Run a Deep Scan above to execute a link in the sandbox.</p>
-              </div>
-            ) : (
-              <div className="table-responsive">
-                <table className="custom-table">
-                  <thead>
-                    <tr>
-                      <th>Verdict</th>
-                      <th>Scanned URL</th>
-                      <th>Confidence</th>
-                      <th>Time</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sandboxHistory.map((item) => (
-                      <tr key={item.job_id}>
-                        <td>
-                          <span className={`status-pill ${
-                            item.verdict === 'Phishing'
-                              ? 'pill-block'
-                              : (item.verdict.startsWith('Suspicious') ? 'pill-review' : 'pill-allow')
-                          }`}>
-                            {item.verdict.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="url-cell" title={item.url}>
-                          {item.url}
-                        </td>
-                        <td>
-                          <strong>{Math.round((item.confidence || 0) * 100)}%</strong>
-                        </td>
-                        <td className="date-cell">
-                          {new Date(item.created_at).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            month: 'short',
-                            day: 'numeric',
-                          })}
-                        </td>
-                        <td>
-                          <div className="table-actions">
-                            <button
-                              type="button"
-                              className="btn-table"
-                              onClick={() => handleInspectSandbox(item.job_id)}
-                            >
-                              Inspect
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </section>
-
         <section className="info-card">
           <div className="info-header">
             <h3>How the detection system works</h3>
@@ -1341,8 +842,8 @@ export default function App() {
               <div className="info-icon">
                 <Icon name="terminal" size={22} />
               </div>
-              <h4>3. Sandbox Emulation</h4>
-              <p>Executes deep browser emulation to record redirect chains, inspect loaded forms, and capture visual page screenshots.</p>
+              <h4>3. Live Page Telemetry</h4>
+              <p>Inspects live DOM forms, credential fields, HTTP response status codes, and security gateway intercept warnings.</p>
             </div>
             <div className="info-box">
               <div className="info-icon">

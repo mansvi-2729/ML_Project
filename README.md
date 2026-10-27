@@ -1,22 +1,19 @@
 # PhishGuard AI
-## Autonomous IDPS, Deep Sandbox & Web Threat Detection System
+## Autonomous IDPS & Web Threat Detection System
 
 PhishGuard AI is an advanced, evidence-based threat detection and prevention platform designed to identify, isolate, and neutralize deceptive websites, credential harvesters, and zero-day phishing attacks in real time.
 
-Unlike static blacklists or isolated machine-learning classifiers, PhishGuard AI implements a **defense-in-depth architecture** combining lexical machine learning, security heuristics, legitimate infrastructure registries, and a **genuine headless browser sandbox** with live network packet telemetry.
+Unlike static blacklists or isolated machine-learning classifiers, PhishGuard AI implements a **defense-in-depth architecture** combining lexical machine learning, security heuristics, legitimate infrastructure registries, live page telemetry, and active browser interception.
 
 ---
 
 ## 1. Key Capabilities
 
-### 🛡️ Dual-Engine Threat Inspection
-- **Quick Triage Analysis**: Millisecond evaluation using a calibrated Random Forest classifier (15 lexical & structural features), security heuristics, brand-impersonation algorithms (Levenshtein distance & lookalike substitution maps), and optional VirusTotal intelligence.
-- **Deep Headless Sandbox**: Automated browser container (Chromium/Edge) that executes live URL navigation, captures authentic viewport screenshots, parses dynamic DOM hierarchies, and intercepts external credential exfiltration.
-
-### 🌐 Live Wire & Packet Telemetry
-- **Cryptographic Cipher Inspection**: Live socket-level TLS handshake analysis to verify protocol versions (TLS 1.2/1.3) and negotiated cipher suites.
-- **Cleartext Leak & Entropy Detection**: Real-time Shannon entropy calculation on wire payloads to identify obfuscation, combined with unencrypted HTTP credential transmission detection.
-- **Honeytoken Form Audit**: Automatic extraction of `<form action>` targets to detect rogue external exfiltration destinations (`destination_mismatch`).
+### 🛡️ Multi-Layer Threat Inspection
+- **Machine Learning Classification**: Millisecond evaluation using a calibrated Random Forest classifier (15 lexical & structural features trained on 160,000+ samples).
+- **Security Heuristics**: Structural URL rules, suspicious TLD detection, URL shortener resolution, and Shannon entropy analysis.
+- **Brand Impersonation Detection**: Levenshtein distance matching and lookalike character substitution maps (homoglyphs like `0` → `o`, `1` → `l`).
+- **Optional Threat Intelligence**: Live VirusTotal lookup integration for multi-engine correlation.
 
 ### 🔍 Threat Gateway & Inactive Domain Forensics
 - **Security Interstitial Intercept**: Automatically detects and parses global threat gateway blocks (**Cloudflare "Suspected Phishing"**, Google Safe Browsing, and Microsoft SmartScreen) to confirm blacklisted campaigns with 99% confidence.
@@ -37,31 +34,33 @@ Unlike static blacklists or isolated machine-learning classifiers, PhishGuard AI
 ```text
                                   User URL Input
                                         │
-                    ┌───────────────────┴───────────────────┐
-                    ▼                                       ▼
-           [ 1. Quick Triage Engine ]              [ 2. Deep Sandbox Engine ]
-                    │                                       │
-         URL Lexical Validation                 Public DNS Socket Resolution
-                    │                                       │
-        15-Feature Vector Extraction           Real TLS Cipher Handshake Check
-                    │                                       │
-         ┌──────────┴──────────┐               Headless Chromium Navigation
-         ▼                     ▼                            │
-    Random Forest       Security Heuristics    Pixel Viewport Screenshot Capture
-    ML Probability      & Lookalike Check                   │
-         │                     │               Live DOM & Form Action Forensics
-         └──────────┬──────────┘                            │
-                    ▼                          Gateway Threat Interstitial Check
-        Legitimate Domain Registry                          │
-                    │                          Wire Shannon Entropy & Telemetry
-         Optional Threat Intel                              │
-                    │                                       ▼
-                    ▼                          Sandbox Behavioral Verdict
-       Aggregated Evidence Score               (Phishing / Suspicious / Inactive)
-                    │
-         ┌──────────┼──────────┐
-         ▼          ▼          ▼
-       SAFE       REVIEW     BLOCK
+                                        ▼
+                             [ Quick Triage Engine ]
+                                        │
+                             URL Lexical Validation
+                                        │
+                            15-Feature Vector Extraction
+                                        │
+                     ┌──────────────────┴──────────────────┐
+                     ▼                                     ▼
+            Random Forest ML                      Security Heuristics
+            Calibrated Probability                & Lookalike Checks
+                     │                                     │
+                     └──────────────────┬──────────────────┘
+                                        ▼
+                            Legitimate Domain Registry
+                                        │
+                            Live Page & Telemetry Check
+                           (DNS, Interstitials, Forms)
+                                        │
+                             Optional Threat Intel
+                                        │
+                                        ▼
+                             Aggregated Evidence Score
+                                        │
+                     ┌──────────────────┼──────────────────┐
+                     ▼                  ▼                  ▼
+                   SAFE               REVIEW             BLOCK
 ```
 
 ---
@@ -81,12 +80,14 @@ Unlike static blacklists or isolated machine-learning classifiers, PhishGuard AI
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `POST` | `/api/analyze` | Quick lexical, heuristic, and live page threat triage. |
-| `POST` | `/api/deep-scan` | Initiates asynchronous headless Chromium sandbox container job. |
-| `GET` | `/api/deep-scan/<job_id>` | Polls sandbox job status, DOM forensics, screenshot, and packet telemetry. |
 | `GET` | `/api/history` | Retrieves recent analysis log entries from SQLite database. |
+| `GET` | `/api/history/<id>` | Retrieves full details and feature breakdown for a specific analysis. |
 | `GET` | `/api/stats` | Returns aggregate threat metrics and detection breakdowns. |
-| `GET` | `/api/report/<id>` | Downloads structured forensic PDF report. |
+| `GET` | `/api/settings` | Retrieves active interception policy configuration. |
+| `POST` | `/api/settings` | Updates active interception policy configuration. |
+| `POST` | `/api/report` | Downloads structured forensic PDF report. |
 | `POST` | `/api/feedback` | Records false-positive / false-negative analyst feedback. |
+| `GET` | `/api/model-performance` | Returns accuracy, precision, recall, and confusion matrix of the ML model. |
 | `GET` | `/api/health` | Service health, model calibration, and registry status. |
 
 ---
@@ -96,7 +97,6 @@ Unlike static blacklists or isolated machine-learning classifiers, PhishGuard AI
 ### Prerequisites
 - Python 3.10+
 - Node.js 18+ & npm
-- Google Chrome or Microsoft Edge installed (for headless sandbox screenshots)
 
 ### Backend Setup
 
@@ -152,7 +152,7 @@ Dashboard will be accessible at `http://localhost:5173`.
 PhishGuardAI/
 │
 ├── backend/
-│   ├── app.py                   # Main Flask API, deep sandbox runner, and PDF generator
+│   ├── app.py                   # Main Flask API and PDF report generator
 │   ├── feature_extractor.py     # 15-feature lexical extraction & Shannon entropy
 │   ├── risk_engine.py           # Heuristics, brand impersonation & decision thresholds
 │   ├── intelligence.py          # Live page inspector, status tracker & threat signatures
@@ -167,13 +167,13 @@ PhishGuardAI/
 │   │   ├── phishing_model.joblib # Serialized Random Forest classifier
 │   │   └── model_metadata.json   # Model metrics, feature importances, and versioning
 │   │
-│   └── reports/                 # Storage for generated forensic artifacts
+│   └── reports/                 # Storage for generated forensic PDF reports
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx              # Main React dashboard, telemetry & deep scan UI
+│   │   ├── App.jsx              # Main React dashboard & analysis UI
 │   │   ├── main.jsx             # React entrypoint
-│   │   └── styles.css           # Premium responsive styling (Light/Dark themes)
+│   │   └── styles.css           # Responsive styling (Light/Dark themes)
 │   │
 │   ├── package.json
 │   ├── vite.config.js
@@ -194,4 +194,4 @@ PhishGuardAI/
 
 ## 7. Security & Academic Disclaimer
 
-PhishGuard AI is developed as a cybersecurity and threat intelligence research system. While the multi-layered IDPS pipeline, headless sandbox, and legitimate registry significantly mitigate risks and eliminate common false positives, no automated security engine can guarantee mathematical 100% prevention against all zero-day or adversarial evasion techniques. Always exercise defensive browsing practices.
+PhishGuard AI is developed as a cybersecurity and threat intelligence research system. While the multi-layered IDPS pipeline, heuristic engine, and legitimate registry significantly mitigate risks and eliminate common false positives, no automated security engine can guarantee mathematical 100% prevention against all zero-day or adversarial evasion techniques. Always exercise defensive browsing practices.

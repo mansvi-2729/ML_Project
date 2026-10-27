@@ -6,8 +6,10 @@ backend/phishguard.db
 backend/reports/*
 !backend/reports/.gitkeep
 backend/model/*.joblib
-backend/model/model_metadata.json
+!backend/model/model_metadata.json
 backend/.env
 frontend/dist/
 dist/
+~$*
+.DS_Store
 
